@@ -51,6 +51,41 @@
     -webkit-tap-highlight-color: transparent;
   }
   #new:active { background: #444; }
+  #sheet { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; justify-content: flex-end; }
+  #sheet[hidden] { display: none; }
+  #sheet-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.6); }
+  #sheet-panel {
+    position: relative;
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+    background: #1e1e1e;
+    border-radius: 16px 16px 0 0;
+    padding: 1rem 1rem max(1rem, env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  #sheet-panel h2 { font-size: 0.9rem; font-weight: 600; color: #aaa; text-align: center; margin-bottom: 0.25rem; }
+  #sheet-panel button {
+    background: #2c2c2c;
+    color: #eee;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    padding: 0.8rem 1rem;
+    font-size: 1rem;
+    text-align: left;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5rem;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #sheet-panel button:active { background: #3a3a3a; }
+  #sheet-panel button.last { border-color: #3c96ff; }
+  #sheet-panel small { font-size: 0.7rem; color: #888; font-weight: 400; }
+  #sheet-panel button.last small.mark { color: #7fb8ff; }
 </style>
 </head>
 <body>
@@ -60,6 +95,16 @@
   <div id="stage"><canvas id="cube"></canvas></div>
   <p id="hint">Drag to rotate · tap a number to pick a layer · tap a cube, then tap again to place</p>
   <button id="new" type="button">New game</button>
+  <div id="sheet" hidden>
+    <div id="sheet-backdrop"></div>
+    <div id="sheet-panel" role="dialog" aria-label="Choose game mode">
+      <h2>New game</h2>
+      <button type="button" data-mode="pvp"><span>2 players</span><small>same phone</small></button>
+      <button type="button" data-mode="easy"><span>vs Computer: Easy</span></button>
+      <button type="button" data-mode="medium"><span>vs Computer: Medium</span></button>
+      <button type="button" data-mode="hard"><span>vs Computer: Hard</span></button>
+    </div>
+  </div>
 <script id="rules">
 (() => {
   const Q = globalThis.Qubic = globalThis.Qubic || {};
@@ -598,7 +643,11 @@
 (() => {
   const Q = globalThis.Qubic;
   const { HALF, BADGE_R, PERSPECTIVE, TAP_SLOP, cellCenter, makeCamera, rotate, project, clampPitch, pickCell, spreadBadges } = Q;
-  const s = Q.createGame('pvp');
+  const STORE_KEY = 'qubic.mode';
+  let saved = null;
+  try { saved = Q.parseSavedMode(localStorage.getItem(STORE_KEY)); } catch (_) {}
+  const s = Q.createGame(saved || 'pvp');
+  let lastMode = saved;
   const view = { yaw: -0.6, pitch: 0.45 };
   const cv = document.getElementById('cube'), stage = document.getElementById('stage'), ctx = cv.getContext('2d');
   let w = 0, h = 0, cam = null, hits = [], badges = [];
@@ -690,6 +739,37 @@
       if (i < 0) Q.clearSelection(s); else Q.tapCell(s, i);
     }
     render();
+    if (s.thinking) scheduleComputer();
+  }
+
+  // The computer answers after a short pause; applyComputerMove drops the move if the game was restarted meanwhile.
+  function scheduleComputer() {
+    const gen = s.gen;
+    setTimeout(() => {
+      const i = Q.chooseMove(s.board, 'O', s.mode, { deadline: performance.now() + 150 });
+      Q.applyComputerMove(s, i, gen);
+      render();
+    }, 500);
+  }
+
+  const sheet = document.getElementById('sheet');
+  function openSheet() {
+    for (const b of sheet.querySelectorAll('button[data-mode]')) {
+      const last = b.dataset.mode === lastMode;
+      b.classList.toggle('last', last);
+      const mark = b.querySelector('small.mark');
+      if (last && !mark) { const m = document.createElement('small'); m.className = 'mark'; m.textContent = 'last played'; b.appendChild(m); }
+      else if (!last && mark) mark.remove();
+    }
+    sheet.hidden = false;
+  }
+  function closeSheet() { sheet.hidden = true; }
+  function pickMode(mode) {
+    lastMode = mode;
+    try { localStorage.setItem(STORE_KEY, mode); } catch (_) {}
+    Q.restart(s, mode);
+    closeSheet();
+    render();
   }
 
   // A press is a tap until it strays TAP_SLOP from where it started; after that it rotates for the rest of the press.
@@ -715,11 +795,15 @@
   });
   cv.addEventListener('pointercancel', () => { drag = null; cv.style.cursor = 'grab'; });
 
-  document.getElementById('new').onclick = () => { Q.restart(s, s.mode); render(); };
+  document.getElementById('new').onclick = openSheet;
+  document.getElementById('sheet-backdrop').onclick = closeSheet;
+  for (const b of sheet.querySelectorAll('button[data-mode]')) b.onclick = () => pickMode(b.dataset.mode);
+  window.addEventListener('keydown', e => { if (e.key === 'Escape' && !sheet.hidden) closeSheet(); });
   window.addEventListener('resize', () => { layout(); });
 
   window.qubicTest = { state: s, tapAt, screenOf: i => project(cam, cellCenter(i)), badgeOf: l => badges[l] };
   layout(); render();
+  if (!saved) openSheet();
 
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();

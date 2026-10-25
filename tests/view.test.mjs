@@ -49,3 +49,43 @@ test('pointer events: jittery taps place, drags only rotate', { skip: !chromeAva
   assert.equal(out.cell0, 'X');
   assert.deepEqual(out.afterDrag, { pending: -1, placed: 1 });
 });
+
+test('modes, computer turn and stale move', { skip: !chromeAvailable() && 'Chrome not found' }, async () => {
+  const out = await runScenario(`
+    const t = window.qubicTest, tap = p => t.tapAt(p.X, p.Y), wait = ms => new Promise(r => setTimeout(r, ms));
+    const sheet = document.getElementById('sheet');
+    out.firstLaunchSheet = !sheet.hidden;
+    document.querySelector('[data-mode="medium"]').click();
+    out.sheetAfterPick = !sheet.hidden;
+    out.mode = document.getElementById('mode').textContent;
+    out.saved = localStorage.getItem('qubic.mode');
+    tap(t.screenOf(0)); tap(t.screenOf(0));
+    out.thinking = document.getElementById('status').textContent;
+    await wait(1500);
+    out.oCount = t.state.board.filter(v => v === 'O').length;
+    out.afterComputer = document.getElementById('status').textContent;
+    document.getElementById('new').click();
+    document.getElementById('sheet-backdrop').click();
+    out.piecesAfterCancel = t.state.board.filter(Boolean).length;
+    const e = t.state.board.findIndex((v, i) => !v && i < 16);
+    tap(t.screenOf(e)); tap(t.screenOf(e));
+    out.thinkingBeforeRestart = t.state.thinking;
+    document.getElementById('new').click();
+    document.querySelector('[data-mode="easy"]').click();
+    await wait(1500);
+    out.piecesAfterStaleRestart = t.state.board.filter(Boolean).length;
+    out.modeAfterRestart = document.getElementById('mode').textContent;
+  `);
+  assert.deepEqual(out.errors, []);
+  assert.equal(out.firstLaunchSheet, true);
+  assert.equal(out.sheetAfterPick, false);
+  assert.equal(out.mode, 'vs Computer · Medium');
+  assert.equal(out.saved, 'medium');
+  assert.equal(out.thinking, 'Computer is thinking…');
+  assert.equal(out.oCount, 1);
+  assert.equal(out.afterComputer, 'Your turn · layer 1');
+  assert.equal(out.piecesAfterCancel, 2);
+  assert.equal(out.thinkingBeforeRestart, true);
+  assert.equal(out.piecesAfterStaleRestart, 0);
+  assert.equal(out.modeAfterRestart, 'vs Computer · Easy');
+});
