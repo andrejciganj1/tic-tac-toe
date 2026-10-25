@@ -165,6 +165,122 @@
   Object.assign(Q, { MODES, createGame, restart, selectLayer, clearSelection, tapCell, applyComputerMove, statusText, modeLabel, parseSavedMode });
 })();
 </script>
+<script id="ai">
+(() => {
+  const Q = globalThis.Qubic = globalThis.Qubic || {};
+  const { LINES, LINES_AT, other } = Q;
+
+  // Deterministic generator (mulberry32) so tests can fix the seed.
+  function makeRng(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // Empty cells that would complete a line for p, ascending.
+  function threatCells(board, p) {
+    const out = [];
+    for (let i = 0; i < 64; i++) {
+      if (board[i]) continue;
+      if (LINES_AT[i].some(n => {
+        let own = 0;
+        for (const j of LINES[n]) if (board[j] === p) own++;
+        return own === 3;
+      })) out.push(i);
+    }
+    return out;
+  }
+
+  // Heuristic value of playing cell i as me (shared by all levels).
+  const OWN = [1, 3, 12], OPP = [0, 2, 9];
+  function cellScore(board, i, me) {
+    const opp = other(me);
+    let s = 0;
+    for (const n of LINES_AT[i]) {
+      let mine = 0, theirs = 0;
+      for (const j of LINES[n]) { if (board[j] === me) mine++; else if (board[j] === opp) theirs++; }
+      if (!theirs) s += OWN[mine];
+      if (!mine) s += OPP[theirs];
+    }
+    return s;
+  }
+
+  const emptyCells = board => { const e = []; for (let i = 0; i < 64; i++) if (!board[i]) e.push(i); return e; };
+  const pickOne = (list, rng) => list[Math.floor(rng() * list.length)];
+
+  // Empty cells after which p has two or more distinct completing cells.
+  function forkCells(board, p) {
+    const out = [];
+    for (const i of emptyCells(board)) {
+      board[i] = p;
+      const n = threatCells(board, p).length;
+      board[i] = '';
+      if (n >= 2) out.push(i);
+    }
+    return out;
+  }
+
+  // Highest-scoring cells of `cells` (all ties), best first.
+  function bestByScore(board, cells, me) {
+    let best = -1, top = [];
+    for (const i of cells) {
+      const s = cellScore(board, i, me);
+      if (s > best) { best = s; top = [i]; } else if (s === best) top.push(i);
+    }
+    return top;
+  }
+
+  // Steps shared by every level: win, then block. Returns a cell or -1.
+  function winOrBlock(board, me) {
+    const win = threatCells(board, me);
+    if (win.length) return win[0];
+    const block = threatCells(board, other(me));
+    return block.length ? block[0] : -1;
+  }
+
+  // Medium's extra steps: make a fork, else stop the opponent's. Returns a cell or -1.
+  function forkStep(board, me, rng) {
+    const mine = forkCells(board, me);
+    if (mine.length) return pickOne(bestByScore(board, mine, me), rng);
+    const theirs = forkCells(board, other(me));
+    return theirs.length ? pickOne(bestByScore(board, theirs, me), rng) : -1;
+  }
+
+  function easyMove(board, me, rng) {
+    const m = winOrBlock(board, me);
+    if (m >= 0) return m;
+    const ranked = emptyCells(board)
+      .map(i => ({ i, s: cellScore(board, i, me) }))
+      .sort((a, b) => b.s - a.s || a.i - b.i)
+      .slice(0, 5);
+    return pickOne(ranked, rng).i;
+  }
+
+  function mediumMove(board, me, rng) {
+    let m = winOrBlock(board, me);
+    if (m >= 0) return m;
+    m = forkStep(board, me, rng);
+    if (m >= 0) return m;
+    return pickOne(bestByScore(board, emptyCells(board), me), rng);
+  }
+
+  // Never mutates the caller's board (forkCells works on a copy).
+  function chooseMove(board, me, level, opts = {}) {
+    const { rng = Math.random, now = () => performance.now(), deadline = now() + 150 } = opts;
+    const work = board.slice();
+    if (level === 'easy') return easyMove(work, me, rng);
+    // 'hard' behaves like medium until Task 6 adds search (it will use now and deadline).
+    return mediumMove(work, me, rng);
+  }
+
+  Object.assign(Q, { makeRng, threatCells, forkCells, cellScore, chooseMove });
+})();
+</script>
 <script id="geometry">
 (() => {
   const Q = globalThis.Qubic = globalThis.Qubic || {};
