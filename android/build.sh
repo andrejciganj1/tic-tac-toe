@@ -19,15 +19,21 @@ OUT="$ROOT/out"
 GEN="$OUT/gen"
 OBJ="$OUT/obj"
 CLS="$OUT/classes"
+RES="$OUT/res"
+ASSETS="$OUT/assets"
 rm -rf "$OUT"
-mkdir -p "$GEN" "$OBJ" "$CLS"
+mkdir -p "$GEN" "$OBJ" "$CLS" "$RES/mipmap" "$ASSETS"
 
-"$BT/aapt" package -f -m -J "$GEN" -M "$ROOT/AndroidManifest.xml" -S "$ROOT/res" -I "$ANDROID_JAR"
+# The web game at the repo root is the single source; stage it for the APK.
+cp "$REPO/index.html" "$ASSETS/index.html"
+cp "$REPO/icon.png" "$RES/mipmap/ic_launcher.png"
+
+"$BT/aapt" package -f -m -J "$GEN" -M "$ROOT/AndroidManifest.xml" -S "$RES" -I "$ANDROID_JAR"
 javac --release 11 -cp "$ANDROID_JAR" -d "$CLS" \
   "$ROOT/src/com/andrej/tictactoe/MainActivity.java" \
   "$GEN"/com/andrej/tictactoe/R.java
 "$BT/d8" --min-api 21 --output "$OBJ" $(find "$CLS" -name '*.class')
-"$BT/aapt" package -f -M "$ROOT/AndroidManifest.xml" -S "$ROOT/res" -A "$ROOT/assets" \
+"$BT/aapt" package -f -M "$ROOT/AndroidManifest.xml" -S "$RES" -A "$ASSETS" \
   -I "$ANDROID_JAR" -F "$OUT/base.apk"
 ( cd "$OBJ" && zip -u "$OUT/base.apk" classes.dex )
 "$BT/zipalign" -f 4 "$OUT/base.apk" "$OUT/aligned.apk"
