@@ -25,3 +25,27 @@ test('2-player cube smoke test', { skip: !chromeAvailable() && 'Chrome not found
   assert.deepEqual(out.afterResize, { pending: 16, layer: 1, cell0: 'X' });
   assert.ok(out.canvasWidth > 0);
 });
+
+test('pointer events: jittery taps place, drags only rotate', { skip: !chromeAvailable() && 'Chrome not found' }, async () => {
+  const out = await runScenario(`
+    const t = window.qubicTest, cv = document.getElementById('cube');
+    const fire = (type, x, y) => { const r = cv.getBoundingClientRect(); cv.dispatchEvent(new PointerEvent(type, { pointerId: 1, bubbles: true, clientX: r.left + x, clientY: r.top + y })); };
+    const jitterTap = p => {
+      fire('pointerdown', p.X, p.Y);
+      fire('pointermove', p.X + 3, p.Y); fire('pointermove', p.X, p.Y + 3); fire('pointermove', p.X - 2, p.Y - 2);
+      fire('pointerup', p.X, p.Y);
+    };
+    const p = t.screenOf(0);
+    jitterTap(p); out.afterFirst = t.state.pending;
+    jitterTap(p); out.cell0 = t.state.board[0];
+    const q = t.screenOf(5);
+    fire('pointerdown', q.X, q.Y);
+    for (let k = 1; k <= 6; k++) fire('pointermove', q.X + k * 10, q.Y);
+    fire('pointerup', q.X + 60, q.Y);
+    out.afterDrag = { pending: t.state.pending, placed: t.state.board.filter(Boolean).length };
+  `);
+  assert.deepEqual(out.errors, []);
+  assert.equal(out.afterFirst, 0);
+  assert.equal(out.cell0, 'X');
+  assert.deepEqual(out.afterDrag, { pending: -1, placed: 1 });
+});

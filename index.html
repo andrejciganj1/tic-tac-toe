@@ -315,20 +315,25 @@
     render();
   }
 
+  // A press is a tap until it strays TAP_SLOP from where it started; after that it rotates for the rest of the press.
   let drag = null;
-  cv.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, moved: 0 }; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointerdown', e => {
+    drag = { sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, rotating: false };
+    try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+  });
   cv.addEventListener('pointermove', e => {
     if (!drag) return;
-    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-    drag.moved += Math.abs(dx) + Math.abs(dy);
-    if (drag.moved < TAP_SLOP) return;
-    cv.style.cursor = 'grabbing';
-    view.yaw += dx * 0.01;
-    view.pitch = clampPitch(view.pitch + dy * 0.01);
+    if (!drag.rotating) {
+      if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < TAP_SLOP) return;
+      drag.rotating = true;
+      cv.style.cursor = 'grabbing';
+    }
+    view.yaw += (e.clientX - drag.x) * 0.01;
+    view.pitch = clampPitch(view.pitch + (e.clientY - drag.y) * 0.01);
     drag.x = e.clientX; drag.y = e.clientY; draw();
   });
   cv.addEventListener('pointerup', e => {
-    if (drag && drag.moved < TAP_SLOP) { const r = cv.getBoundingClientRect(); tapAt(e.clientX - r.left, e.clientY - r.top); }
+    if (drag && !drag.rotating) { const r = cv.getBoundingClientRect(); tapAt(e.clientX - r.left, e.clientY - r.top); }
     drag = null; cv.style.cursor = 'grab';
   });
   cv.addEventListener('pointercancel', () => { drag = null; cv.style.cursor = 'grab'; });
