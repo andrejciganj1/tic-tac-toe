@@ -1,6 +1,6 @@
 # Tic Tac Toe 4×4×4
 
-Four in a row on a 4×4×4 cube: along any row, column, layer diagonal or space diagonal. Works in a browser and as an Android app.
+Four in a row on a 4×4×4 cube: along any straight line of 4 cells (rows, columns, pillars, diagonals in any flat or vertical slice, and the 4 corner-to-corner space diagonals). Works in a browser and as an Android app.
 
 ## How to play
 

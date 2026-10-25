@@ -733,7 +733,8 @@
 
   function tapAt(x, y) {
     let placed = false;
-    const b = badges.find(b => Math.hypot(x - b.X, y - b.Y) <= BADGE_R + 6);
+    let b = null, bd = BADGE_R + 6;
+    for (const c of badges) { const d = Math.hypot(x - c.X, y - c.Y); if (d <= bd) { b = c; bd = d; } }
     if (b) Q.selectLayer(s, b.l);
     else {
       const i = pickCell(hits, x, y);
@@ -749,7 +750,9 @@
     const gen = s.gen;
     clearTimeout(computerTimer);
     computerTimer = setTimeout(() => {
-      const i = Q.chooseMove(s.board, 'O', s.mode, { deadline: performance.now() + 150 });
+      let i = -1;
+      try { i = Q.chooseMove(s.board, 'O', s.mode, { deadline: performance.now() + 150 }); } catch (_) {}
+      if (!(i >= 0 && i < 64 && !s.board[i])) i = s.board.indexOf(''); // never stick on "thinking"
       Q.applyComputerMove(s, i, gen);
       render();
     }, 500);
@@ -777,13 +780,16 @@
   }
 
   // A press is a tap until it strays TAP_SLOP from where it started; after that it rotates for the rest of the press.
+  // Only the first primary-button pointer counts; a second finger or a right click is ignored.
   let drag = null;
+  cv.addEventListener('contextmenu', e => e.preventDefault());
   cv.addEventListener('pointerdown', e => {
-    drag = { sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, rotating: false };
+    if (drag || !e.isPrimary || e.button !== 0) return;
+    drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, rotating: false };
     try { cv.setPointerCapture(e.pointerId); } catch (_) {}
   });
   cv.addEventListener('pointermove', e => {
-    if (!drag) return;
+    if (!drag || e.pointerId !== drag.id) return;
     if (!drag.rotating) {
       if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < TAP_SLOP) return;
       drag.rotating = true;
@@ -794,10 +800,11 @@
     drag.x = e.clientX; drag.y = e.clientY; draw();
   });
   cv.addEventListener('pointerup', e => {
-    if (drag && !drag.rotating) { const r = cv.getBoundingClientRect(); tapAt(e.clientX - r.left, e.clientY - r.top); }
+    if (!drag || e.pointerId !== drag.id) return;
+    if (!drag.rotating) { const r = cv.getBoundingClientRect(); tapAt(e.clientX - r.left, e.clientY - r.top); }
     drag = null; cv.style.cursor = 'grab';
   });
-  cv.addEventListener('pointercancel', () => { drag = null; cv.style.cursor = 'grab'; });
+  cv.addEventListener('pointercancel', e => { if (!drag || e.pointerId !== drag.id) return; drag = null; cv.style.cursor = 'grab'; });
 
   document.getElementById('new').onclick = openSheet;
   document.getElementById('sheet-backdrop').onclick = closeSheet;
@@ -806,7 +813,7 @@
   window.addEventListener('resize', () => { layout(); });
 
   window.qubicTest = { state: s, tapAt, screenOf: i => project(cam, cellCenter(i)), badgeOf: l => badges[l] };
-  layout(); render();
+  render(); layout();
   if (!saved) openSheet();
 
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

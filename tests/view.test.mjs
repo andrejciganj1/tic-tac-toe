@@ -29,7 +29,7 @@ test('2-player cube smoke test', { skip: !chromeAvailable() && 'Chrome not found
 test('pointer events: jittery taps place, drags only rotate', { skip: !chromeAvailable() && 'Chrome not found' }, async () => {
   const out = await runScenario(`
     const t = window.qubicTest, cv = document.getElementById('cube');
-    const fire = (type, x, y) => { const r = cv.getBoundingClientRect(); cv.dispatchEvent(new PointerEvent(type, { pointerId: 1, bubbles: true, clientX: r.left + x, clientY: r.top + y })); };
+    const fire = (type, x, y) => { const r = cv.getBoundingClientRect(); cv.dispatchEvent(new PointerEvent(type, { pointerId: 1, isPrimary: true, bubbles: true, clientX: r.left + x, clientY: r.top + y })); };
     const jitterTap = p => {
       fire('pointerdown', p.X, p.Y);
       fire('pointermove', p.X + 3, p.Y); fire('pointermove', p.X, p.Y + 3); fire('pointermove', p.X - 2, p.Y - 2);
@@ -48,6 +48,32 @@ test('pointer events: jittery taps place, drags only rotate', { skip: !chromeAva
   assert.equal(out.afterFirst, 0);
   assert.equal(out.cell0, 'X');
   assert.deepEqual(out.afterDrag, { pending: -1, placed: 1 });
+});
+
+test('pointer events: second finger and right button are ignored', { skip: !chromeAvailable() && 'Chrome not found' }, async () => {
+  const out = await runScenario(`
+    const t = window.qubicTest, cv = document.getElementById('cube');
+    const fire = (type, x, y, o = {}) => { const r = cv.getBoundingClientRect(); cv.dispatchEvent(new PointerEvent(type, { pointerId: 1, isPrimary: true, bubbles: true, clientX: r.left + x, clientY: r.top + y, ...o })); };
+    const p = t.screenOf(0), q = t.screenOf(5), second = { pointerId: 2, isPrimary: false };
+    fire('pointerdown', p.X, p.Y); fire('pointerup', p.X, p.Y);                      // selects cell 0
+    fire('pointerdown', p.X, p.Y);
+    fire('pointerdown', q.X, q.Y, second);
+    for (let k = 1; k <= 6; k++) fire('pointermove', q.X + k * 10, q.Y, second);   // must not rotate
+    fire('pointerup', q.X, q.Y, second);                                             // must not tap
+    out.afterSecond = { pending: t.state.pending, placed: t.state.board.filter(Boolean).length };
+    fire('pointerup', p.X, p.Y);                                                     // the first finger still places
+    out.afterFirstLift = t.state.board[0];
+    const r = t.screenOf(1);
+    fire('pointerdown', r.X, r.Y); fire('pointerup', r.X, r.Y);                      // select cell 1
+    fire('pointerdown', r.X, r.Y, { button: 2 }); fire('pointerup', r.X, r.Y, { button: 2 });
+    out.afterRight = { pending: t.state.pending, cell1: t.state.board[1] };
+    out.menuPrevented = !cv.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  `);
+  assert.deepEqual(out.errors, []);
+  assert.deepEqual(out.afterSecond, { pending: 0, placed: 0 });
+  assert.equal(out.afterFirstLift, 'X');
+  assert.deepEqual(out.afterRight, { pending: 1, cell1: '' });
+  assert.ok(out.menuPrevented);
 });
 
 test('modes, computer turn and stale move', { skip: !chromeAvailable() && 'Chrome not found' }, async () => {
