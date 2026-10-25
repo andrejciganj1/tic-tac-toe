@@ -8,66 +8,58 @@
 <meta name="theme-color" content="#111">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.png">
-<title>Tic Tac Toe</title>
+<title>Tic Tac Toe 4×4×4</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { background: #111; }
   body {
     font-family: system-ui, sans-serif;
     background: #111;
     color: #eee;
-    min-height: 100dvh;
+    height: 100dvh;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 1.25rem;
-    padding: 1rem;
-    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    gap: 0.4rem;
+    padding: 0.75rem 0.75rem max(0.75rem, env(safe-area-inset-bottom));
     user-select: none;
     -webkit-user-select: none;
     touch-action: manipulation;
   }
-  h1 { font-size: 1.25rem; font-weight: 600; letter-spacing: 0.02em; }
+  h1 { font-size: 1.15rem; font-weight: 600; letter-spacing: 0.02em; }
+  #mode { font-size: 0.75rem; color: #777; min-height: 1.1em; }
   #status { font-size: 1rem; color: #aaa; min-height: 1.5em; }
-  #board {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-    width: min(84vw, 320px);
-    aspect-ratio: 1;
-  }
-  .cell {
-    background: #222;
-    border: none;
+  #stage { position: relative; flex: 1 1 0; min-height: 300px; width: 100%; max-width: 480px; }
+  #cube {
+    position: absolute;
+    left: 0;
+    top: 0;
+    touch-action: none;
+    cursor: grab;
     border-radius: 12px;
-    color: #eee;
-    font-size: clamp(2.5rem, 12vw, 3.5rem);
-    font-weight: 700;
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
+    background: #181818;
   }
-  .cell:active:not(:disabled) { background: #2a2a2a; }
-  .cell:disabled { cursor: default; }
-  .cell.win { background: #1a3d2a; color: #6f6; }
-  #reset {
-    margin-top: 0.25rem;
+  #hint { font-size: 0.75rem; color: #666; text-align: center; max-width: 480px; }
+  #new {
     background: #333;
     color: #eee;
     border: none;
     border-radius: 999px;
-    padding: 0.75rem 1.5rem;
+    padding: 0.6rem 1.5rem;
     font-size: 1rem;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
-  #reset:active { background: #444; }
+  #new:active { background: #444; }
 </style>
 </head>
 <body>
-  <h1>Tic Tac Toe</h1>
-  <p id="status">X's turn</p>
-  <div id="board"></div>
-  <button id="reset" type="button">New game</button>
+  <h1>Tic Tac Toe 4×4×4</h1>
+  <p id="mode"></p>
+  <p id="status"></p>
+  <div id="stage"><canvas id="cube"></canvas></div>
+  <p id="hint">Drag to rotate · tap a number to pick a layer · tap a cube, then tap again to place</p>
+  <button id="new" type="button">New game</button>
 <script id="rules">
 (() => {
   const Q = globalThis.Qubic = globalThis.Qubic || {};
@@ -225,55 +217,130 @@
   Object.assign(Q, { HALF, BADGE_R, PERSPECTIVE, PITCH_LIMIT, TAP_SLOP, cellCenter, makeCamera, rotate, project, clampPitch, pickCell, spreadBadges });
 })();
 </script>
-<script>
-const wins = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
-let board, turn, over;
-const status = document.getElementById('status');
-const boardEl = document.getElementById('board');
+<script id="view">
+(() => {
+  const Q = globalThis.Qubic;
+  const { HALF, BADGE_R, PERSPECTIVE, TAP_SLOP, cellCenter, makeCamera, rotate, project, clampPitch, pickCell, spreadBadges } = Q;
+  const s = Q.createGame('pvp');
+  const view = { yaw: -0.6, pitch: 0.45 };
+  const cv = document.getElementById('cube'), stage = document.getElementById('stage'), ctx = cv.getContext('2d');
+  let w = 0, h = 0, cam = null, hits = [], badges = [];
 
-function start() {
-  board = Array(9).fill('');
-  turn = 'X';
-  over = false;
-  status.textContent = "X's turn";
-  boardEl.innerHTML = '';
-  for (let i = 0; i < 9; i++) {
-    const b = document.createElement('button');
-    b.className = 'cell';
-    b.type = 'button';
-    b.setAttribute('aria-label', 'Cell ' + (i + 1));
-    b.onclick = () => play(i, b);
-    boardEl.appendChild(b);
+  // Unit-cube corners (bit 0 = x, bit 1 = y, bit 2 = z) and faces as corner cycles with normals.
+  const CORNERS = [...Array(8)].map((_, b) => [b & 1 ? 1 : -1, b & 2 ? 1 : -1, b & 4 ? 1 : -1]);
+  const FACES = [
+    [[0, 2, 6, 4], [-1, 0, 0]], [[1, 3, 7, 5], [1, 0, 0]],
+    [[0, 1, 5, 4], [0, -1, 0]], [[2, 3, 7, 6], [0, 1, 0]],
+    [[0, 1, 3, 2], [0, 0, -1]], [[4, 5, 7, 6], [0, 0, 1]],
+  ];
+  const LIGHT = (() => { const v = [-0.35, 0.8, -0.5], n = Math.hypot(...v); return v.map(x => x / n); })();
+  const RGB = { '': [190, 195, 210], X: [60, 150, 255], O: [255, 70, 70] };
+  const EDGE = { X: 'rgba(170,215,255,0.9)', O: 'rgba(255,190,190,0.9)' };
+
+  function voxel(i) {
+    const v = s.board[i], ctr = cellCenter(i), act = Math.floor(i / 16) === s.activeLayer;
+    const win = s.winLine && s.winLine.includes(i), sel = i === s.pending && !v;
+    const pts = CORNERS.map(k => project(cam, [ctr[0] + k[0] * HALF, ctr[1] + k[1] * HALF, ctr[2] + k[2] * HALF]));
+    const faces = FACES.map(([ix, n]) => {
+      const rn = rotate(cam, n);
+      return { q: ix.map(k => pts[k]), front: rn[2] < 0, light: 0.55 + 0.45 * Math.max(0, rn[0] * LIGHT[0] + rn[1] * LIGHT[1] + rn[2] * LIGHT[2]) };
+    }).sort((a, b) => a.front - b.front);
+    const fill = v ? 0.85 : sel ? 0.4 : act ? 0.12 : 0.025;
+    const edge = win ? '#9f9' : sel ? EDGE[s.turn] : i === s.last ? '#fff' : v ? EDGE[v] : act ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.07)';
+    const rgb = sel ? RGB[s.turn] : RGB[v];
+    ctx.setLineDash(sel ? [3, 2] : []);
+    for (const f of faces) {
+      if (v && !f.front) continue;
+      ctx.beginPath(); f.q.forEach((pt, j) => j ? ctx.lineTo(pt.X, pt.Y) : ctx.moveTo(pt.X, pt.Y)); ctx.closePath();
+      const [r, g, b] = rgb.map(x => Math.round(x * f.light));
+      ctx.fillStyle = `rgba(${r},${g},${b},${fill})`; ctx.fill();
+      ctx.lineWidth = win || sel ? 2 : i === s.last ? 1.6 : 1; ctx.strokeStyle = edge; ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    if (act && !v) { const c = project(cam, ctr); hits.push({ i, X: c.X, Y: c.Y, r: HALF * 1.6 * c.s }); }
   }
-}
 
-function play(i, btn) {
-  if (over || board[i]) return;
-  board[i] = turn;
-  btn.textContent = turn;
-  btn.disabled = true;
-  const line = wins.find(w => w.every(j => board[j] === turn));
-  if (line) {
-    over = true;
-    status.textContent = turn + ' wins';
-    line.forEach(j => boardEl.children[j].classList.add('win'));
-    return;
+  // Layer numbers sit in a column on the left, each level with its layer's centre, pushed apart so they stay tappable.
+  function placeBadges() {
+    const ys = [0, 1, 2, 3].map(l => project(cam, [0, 1.5 - l, 0]).Y);
+    const out = spreadBadges(ys, 2 * BADGE_R + 6, BADGE_R + 4, h - (BADGE_R + 4));
+    return out.map((Y, l) => ({ l, X: BADGE_R + 6, Y }));
   }
-  if (board.every(Boolean)) {
-    over = true;
-    status.textContent = 'Draw';
-    return;
+
+  function draw() {
+    if (!w) return;
+    cam = makeCamera({ w, h, yaw: view.yaw, pitch: view.pitch });
+    ctx.clearRect(0, 0, w, h);
+    hits = [];
+    const order = s.board.map((_, i) => ({ i, z: rotate(cam, cellCenter(i))[2] })).sort((a, b) => b.z - a.z);
+    for (const { i } of order) voxel(i);
+    if (s.winLine) {
+      const a = project(cam, cellCenter(s.winLine[0])), b = project(cam, cellCenter(s.winLine[3]));
+      ctx.strokeStyle = 'rgba(120,255,120,0.75)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(a.X, a.Y); ctx.lineTo(b.X, b.Y); ctx.stroke();
+    }
+    badges = placeBadges();
+    for (const b of badges) {
+      const act = b.l === s.activeLayer;
+      ctx.beginPath(); ctx.arc(b.X, b.Y, BADGE_R, 0, 7);
+      ctx.fillStyle = act ? '#ddd' : '#2c2c2c'; ctx.fill();
+      ctx.fillStyle = act ? '#111' : '#aaa'; ctx.font = '600 13px system-ui';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(b.l + 1, b.X, b.Y + 0.5);
+    }
   }
-  turn = turn === 'X' ? 'O' : 'X';
-  status.textContent = turn + "'s turn";
-}
 
-document.getElementById('reset').onclick = start;
-start();
+  function render() {
+    document.getElementById('mode').textContent = Q.modeLabel(s.mode);
+    document.getElementById('status').textContent = Q.statusText(s);
+    draw();
+  }
 
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
-}
+  // Fills the stage (full width up to 480 px, the height that is left) and keeps the game state.
+  function layout() {
+    w = Math.floor(stage.clientWidth); h = Math.floor(stage.clientHeight);
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    cv.style.width = w + 'px'; cv.style.height = h + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  function tapAt(x, y) {
+    const b = badges.find(b => Math.hypot(x - b.X, y - b.Y) <= BADGE_R + 6);
+    if (b) Q.selectLayer(s, b.l);
+    else {
+      const i = pickCell(hits, x, y);
+      if (i < 0) Q.clearSelection(s); else Q.tapCell(s, i);
+    }
+    render();
+  }
+
+  let drag = null;
+  cv.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, moved: 0 }; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    drag.moved += Math.abs(dx) + Math.abs(dy);
+    if (drag.moved < TAP_SLOP) return;
+    cv.style.cursor = 'grabbing';
+    view.yaw += dx * 0.01;
+    view.pitch = clampPitch(view.pitch + dy * 0.01);
+    drag.x = e.clientX; drag.y = e.clientY; draw();
+  });
+  cv.addEventListener('pointerup', e => {
+    if (drag && drag.moved < TAP_SLOP) { const r = cv.getBoundingClientRect(); tapAt(e.clientX - r.left, e.clientY - r.top); }
+    drag = null; cv.style.cursor = 'grab';
+  });
+  cv.addEventListener('pointercancel', () => { drag = null; cv.style.cursor = 'grab'; });
+
+  document.getElementById('new').onclick = () => { Q.restart(s, s.mode); render(); };
+  window.addEventListener('resize', () => { layout(); });
+
+  window.qubicTest = { state: s, tapAt, screenOf: i => project(cam, cellCenter(i)), badgeOf: l => badges[l] };
+  layout(); render();
+
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
 </script>
 </body>
 </html>
