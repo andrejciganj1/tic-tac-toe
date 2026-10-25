@@ -101,6 +101,78 @@
   Object.assign(Q, { idx, LINES, LINES_AT, winningLine, isFull, other });
 })();
 </script>
+<script id="controller">
+(() => {
+  const Q = globalThis.Qubic = globalThis.Qubic || {};
+  const MODES = ['pvp', 'easy', 'medium', 'hard'];
+
+  function fresh(s, mode) {
+    s.mode = mode;
+    s.board = Array(64).fill('');
+    s.turn = 'X';
+    s.activeLayer = 0;
+    s.pending = -1;
+    s.last = -1;
+    s.winLine = null;
+    s.over = false;
+    s.thinking = false;
+  }
+  function createGame(mode) {
+    const s = { gen: 0 };
+    fresh(s, mode);
+    return s;
+  }
+  function restart(s, mode) {
+    const gen = s.gen + 1;
+    fresh(s, mode);
+    s.gen = gen;
+  }
+  function selectLayer(s, l) { s.activeLayer = l; s.pending = -1; }
+  function clearSelection(s) { s.pending = -1; }
+
+  // Puts the current player's piece on cell i, then sets win, draw or the next turn.
+  function place(s, i) {
+    s.board[i] = s.turn;
+    s.last = i;
+    s.pending = -1;
+    const line = Q.winningLine(s.board, i);
+    if (line) { s.winLine = line; s.over = true; return; }
+    if (Q.isFull(s.board)) { s.over = true; return; }
+    s.turn = Q.other(s.turn);
+    if (s.mode !== 'pvp' && s.turn === 'O') s.thinking = true;
+  }
+
+  function tapCell(s, i) {
+    if (s.over || s.thinking || s.board[i] || Math.floor(i / 16) !== s.activeLayer) return 'ignored';
+    if (s.pending !== i) { s.pending = i; return 'selected'; }
+    place(s, i);
+    return 'placed';
+  }
+  function applyComputerMove(s, i, gen) {
+    if (!s.thinking || gen !== s.gen || s.board[i]) return false;
+    s.thinking = false;
+    place(s, i);
+    return true;
+  }
+
+  function statusText(s) {
+    const pvp = s.mode === 'pvp';
+    if (s.over) {
+      if (!s.winLine) return 'Draw';
+      return pvp ? s.turn + ' wins' : (s.turn === 'X' ? 'You win' : 'Computer wins');
+    }
+    if (s.thinking) return 'Computer is thinking\u2026';
+    if (s.pending >= 0) return (pvp ? s.turn : 'You') + ': tap again to place';
+    return (pvp ? s.turn + "'s turn" : 'Your turn') + ' \u00b7 layer ' + (s.activeLayer + 1);
+  }
+  function modeLabel(mode) {
+    return { pvp: '2 players', easy: 'vs Computer \u00b7 Easy', medium: 'vs Computer \u00b7 Medium', hard: 'vs Computer \u00b7 Hard' }[mode];
+  }
+  function parseSavedMode(value) { return MODES.includes(value) ? value : null; }
+
+  Object.assign(Q, { MODES, createGame, restart, selectLayer, clearSelection, tapCell, applyComputerMove, statusText, modeLabel, parseSavedMode });
+})();
+</script>
 <script>
 const wins = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
 let board, turn, over;
