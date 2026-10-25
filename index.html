@@ -173,6 +173,58 @@
   Object.assign(Q, { MODES, createGame, restart, selectLayer, clearSelection, tapCell, applyComputerMove, statusText, modeLabel, parseSavedMode });
 })();
 </script>
+<script id="geometry">
+(() => {
+  const Q = globalThis.Qubic = globalThis.Qubic || {};
+  const HALF = 0.32, BADGE_R = 14, PERSPECTIVE = 10, PITCH_LIMIT = 1.3, TAP_SLOP = 8;
+
+  function cellCenter(i) { return [(i % 4) - 1.5, 1.5 - Math.floor(i / 16), (Math.floor(i / 4) % 4) - 1.5]; }
+
+  function makeCamera({ w, h, yaw, pitch }) {
+    const ext = Math.hypot(1.5 + HALF, 1.5 + HALF, 1.5 + HALF);
+    const scale = 1.2 * Math.min(w - 2 * (BADGE_R + 14), h) / 2 / ext;
+    return { w, h, yaw, pitch, scale, cx: w / 2 + BADGE_R, cy: h / 2 };
+  }
+
+  // Yaw about the vertical axis first, then pitch.
+  function rotate(cam, [x, y, z]) {
+    const c1 = Math.cos(cam.yaw), s1 = Math.sin(cam.yaw), c2 = Math.cos(cam.pitch), s2 = Math.sin(cam.pitch);
+    const x1 = x * c1 - z * s1, z1 = x * s1 + z * c1;
+    return [x1, y * c2 - z1 * s2, y * s2 + z1 * c2];
+  }
+
+  function project(cam, v) {
+    const [x, y, z] = rotate(cam, v), s = cam.scale * PERSPECTIVE / (PERSPECTIVE + z);
+    return { X: cam.cx + x * s, Y: cam.cy - y * s, z, s };
+  }
+
+  function clampPitch(p) { return Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, p)); }
+
+  function pickCell(hits, x, y) {
+    let best = -1, bestD = Infinity;
+    for (const h of hits) {
+      const d = Math.hypot(x - h.X, y - h.Y);
+      if (d <= h.r && d < bestD) { best = h.i; bestD = d; }
+    }
+    return best;
+  }
+
+  // Returns y positions indexed like the input; on screen, neighbours are at least gap apart, within [top, bottom] when they fit.
+  function spreadBadges(ys, gap, top, bottom) {
+    const out = ys.slice();
+    const order = ys.map((_, k) => k).sort((a, b) => ys[a] - ys[b]);
+    for (let k = 1; k < order.length; k++) out[order[k]] = Math.max(out[order[k]], out[order[k - 1]] + gap);
+    const last = out[order[order.length - 1]];
+    const shift = Math.max(0, last - bottom);
+    for (let k = 0; k < out.length; k++) out[k] -= shift;
+    const lift = Math.max(0, top - out[order[0]]);
+    for (let k = 0; k < out.length; k++) out[k] += lift;
+    return out;
+  }
+
+  Object.assign(Q, { HALF, BADGE_R, PERSPECTIVE, PITCH_LIMIT, TAP_SLOP, cellCenter, makeCamera, rotate, project, clampPitch, pickCell, spreadBadges });
+})();
+</script>
 <script>
 const wins = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
 let board, turn, over;
