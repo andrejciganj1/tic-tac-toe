@@ -1,0 +1,197 @@
+<h2>Cube only, with tap to select and tap again to place</h2>
+<p class="subtitle">Drag to rotate. Tap a number on the left to pick a layer; the other layers fade. Tap one of that layer's small cubes to select it; it turns see-through in the player's colour. Tap it again to place, or tap another cube to move the selection. Tapping empty space or another layer number cancels. "Demo position" sets up a space diagonal for X: pick layer 4, then tap its corner cube closest to the bottom of the screen twice.</p>
+
+<style>
+  #ttt-mock .wrap { display: flex; justify-content: center; margin: 1.25rem 0 1.5rem; }
+  #ttt-mock .col { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  #ttt-mock .phone { width: 340px; height: 720px; background: #111; color: #eee; border-radius: 28px; border: 6px solid #333;
+    overflow: hidden; font-family: system-ui, sans-serif; padding: 14px 12px;
+    display: flex; flex-direction: column; align-items: center; gap: 10px; box-sizing: border-box; }
+  #ttt-mock .phone h4 { font-size: 1rem; margin: 0; color: #eee; font-weight: 600; }
+  #ttt-mock .st { color: #aaa; font-size: .9rem; min-height: 1.3em; }
+  #ttt-mock .hint { color: #666; font-size: .75rem; text-align: center; }
+  #ttt-mock canvas.cube { touch-action: none; cursor: grab; border-radius: 12px; background: #181818; flex: none; }
+  #ttt-mock .btns { display: flex; gap: 8px; margin-top: auto; }
+  #ttt-mock .btns button { background: #333; color: #eee; border: none; border-radius: 999px; padding: .5rem 1rem; font-size: .85rem; cursor: pointer; }
+</style>
+
+<div id="ttt-mock">
+  <div class="wrap">
+    <div class="col">
+      <div class="phone">
+        <h4>Tic Tac Toe 4×4×4</h4>
+        <div class="st"></div>
+        <div class="slot"></div>
+        <div class="hint">Drag to rotate · tap a number to pick a layer · tap a cube, then tap again to place</div>
+        <div class="btns"><button data-act="new">New game</button><button data-act="demo">Demo position</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const root = document.getElementById('ttt-mock');
+  const idx = (l, r, c) => l * 16 + r * 4 + c;
+  const layerOf = i => Math.floor(i / 16);
+
+  const lines = [], seen = new Set();
+  for (let dl = -1; dl <= 1; dl++) for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+    if (!dl && !dr && !dc) continue;
+    for (let l = 0; l < 4; l++) for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) {
+      const el = l + 3 * dl, er = r + 3 * dr, ec = c + 3 * dc;
+      if (el < 0 || el > 3 || er < 0 || er > 3 || ec < 0 || ec > 3) continue;
+      const pts = [0, 1, 2, 3].map(k => idx(l + k * dl, r + k * dr, c + k * dc));
+      const key = [...pts].sort((a, b) => a - b).join();
+      if (!seen.has(key)) { seen.add(key); lines.push(pts); }
+    }
+  }
+
+  let cells, turn, over, winLine, last, activeLayer = 0, pending = -1;
+
+  function reset() { pending = -1; cells = Array(64).fill(''); turn = 'X'; over = false; winLine = null; last = -1; render(); }
+  function demo() {
+    reset();
+    [idx(0,0,0), idx(1,1,1), idx(2,2,2)].forEach(i => cells[i] = 'X');
+    [idx(0,1,1), idx(2,0,2), idx(3,3,0)].forEach(i => cells[i] = 'O');
+    last = idx(3,3,0); activeLayer = 0; render();
+  }
+  function play(i) {
+    if (over || cells[i] || layerOf(i) !== activeLayer) return;
+    cells[i] = turn; last = i; pending = -1;
+    winLine = lines.find(L => L.includes(i) && L.every(j => cells[j] === turn)) || null;
+    if (winLine || cells.every(Boolean)) over = true; else turn = turn === 'X' ? 'O' : 'X';
+    render();
+  }
+
+  // Unit-cube corners (bit 0 = x, bit 1 = y, bit 2 = z) and faces as corner cycles with normals.
+  const CORNERS = [...Array(8)].map((_, b) => [b & 1 ? 1 : -1, b & 2 ? 1 : -1, b & 4 ? 1 : -1]);
+  const FACES = [
+    [[0, 2, 6, 4], [-1, 0, 0]], [[1, 3, 7, 5], [1, 0, 0]],
+    [[0, 1, 5, 4], [0, -1, 0]], [[2, 3, 7, 6], [0, 1, 0]],
+    [[0, 1, 3, 2], [0, 0, -1]], [[4, 5, 7, 6], [0, 0, 1]],
+  ];
+  const LIGHT = (() => { const v = [-0.35, 0.8, -0.5], n = Math.hypot(...v); return v.map(x => x / n); })();
+  const RGB = { '': [190, 195, 210], X: [60, 150, 255], O: [255, 70, 70] };
+  const EDGE = { X: 'rgba(170,215,255,0.9)', O: 'rgba(255,190,190,0.9)' };
+
+  function cube(p, w, h) {
+    const cv = document.createElement('canvas'), dpr = window.devicePixelRatio || 1;
+    cv.className = 'cube'; cv.width = w * dpr; cv.height = h * dpr; cv.style.width = w + 'px'; cv.style.height = h + 'px';
+    const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const st = { yaw: -0.6, pitch: 0.45 };
+    const HALF = 0.32, D = 10, BADGE = 14;
+    const ext = Math.hypot(1.5 + HALF, 1.5 + HALF, 1.5 + HALF);
+    const scale = 1.2 * Math.min(w - 2 * (BADGE + 14), h) / 2 / ext, cx = w / 2 + BADGE, cy = h / 2;
+    let hits = [], badges = [];
+
+    function rot([x, y, z]) {
+      const c1 = Math.cos(st.yaw), s1 = Math.sin(st.yaw), c2 = Math.cos(st.pitch), s2 = Math.sin(st.pitch);
+      const x1 = x * c1 - z * s1, z1 = x * s1 + z * c1;
+      return [x1, y * c2 - z1 * s2, y * s2 + z1 * c2];
+    }
+    function proj(v) { const [x, y, z] = rot(v), s = scale * D / (D + z); return { X: cx + x * s, Y: cy - y * s, z }; }
+    const center = i => [i % 4 - 1.5, 1.5 - layerOf(i), Math.floor(i / 4) % 4 - 1.5];
+
+    function voxel(i) {
+      const v = cells[i], ctr = center(i), act = layerOf(i) === activeLayer;
+      const win = winLine && winLine.includes(i), sel = i === pending && !v;
+      const pts = CORNERS.map(k => proj([ctr[0] + k[0] * HALF, ctr[1] + k[1] * HALF, ctr[2] + k[2] * HALF]));
+      const faces = FACES.map(([ix, n]) => {
+        const rn = rot(n);
+        return { q: ix.map(k => pts[k]), front: rn[2] < 0, light: 0.55 + 0.45 * Math.max(0, rn[0] * LIGHT[0] + rn[1] * LIGHT[1] + rn[2] * LIGHT[2]) };
+      }).sort((a, b) => a.front - b.front);
+      const fill = v ? 0.85 : sel ? 0.4 : act ? 0.12 : 0.025;
+      const edge = win ? '#9f9' : sel ? EDGE[turn] : i === last ? '#fff' : v ? EDGE[v] : act ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.07)';
+      const rgb = sel ? RGB[turn] : RGB[v];
+      ctx.setLineDash(sel ? [3, 2] : []);
+      for (const f of faces) {
+        if (v && !f.front) continue;
+        ctx.beginPath(); f.q.forEach((pt, j) => j ? ctx.lineTo(pt.X, pt.Y) : ctx.moveTo(pt.X, pt.Y)); ctx.closePath();
+        const [r, g, b] = rgb.map(x => Math.round(x * f.light));
+        ctx.fillStyle = `rgba(${r},${g},${b},${fill})`; ctx.fill();
+        ctx.lineWidth = win || sel ? 2 : i === last ? 1.6 : 1; ctx.strokeStyle = edge; ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      if (act && !v && !over) { const c = proj(ctr); hits.push({ i, X: c.X, Y: c.Y, r: HALF * 1.6 * scale * D / (D + c.z) }); }
+    }
+
+    // Layer numbers sit in a column on the left, each level with its layer's centre, pushed apart so they stay tappable.
+    function placeBadges() {
+      const ys = [0, 1, 2, 3].map(l => proj([0, 1.5 - l, 0]).Y);
+      const order = [0, 1, 2, 3].sort((a, b) => ys[a] - ys[b]);
+      for (let k = 1; k < 4; k++) ys[order[k]] = Math.max(ys[order[k]], ys[order[k - 1]] + 2 * BADGE + 6);
+      const shift = Math.max(0, ys[order[3]] + BADGE + 4 - h);
+      return [0, 1, 2, 3].map(l => ({ l, X: BADGE + 6, Y: Math.max(BADGE + 4, ys[l] - shift) }));
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, w, h);
+      hits = [];
+      const order = cells.map((_, i) => ({ i, z: rot(center(i))[2] })).sort((a, b) => b.z - a.z);
+      for (const { i } of order) voxel(i);
+      if (winLine) {
+        const a = proj(center(winLine[0])), b = proj(center(winLine[3]));
+        ctx.strokeStyle = 'rgba(120,255,120,0.75)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(a.X, a.Y); ctx.lineTo(b.X, b.Y); ctx.stroke();
+      }
+      badges = placeBadges();
+      for (const b of badges) {
+        const act = b.l === activeLayer;
+        ctx.beginPath(); ctx.arc(b.X, b.Y, BADGE, 0, 7);
+        ctx.fillStyle = act ? '#ddd' : '#2c2c2c'; ctx.fill();
+        ctx.fillStyle = act ? '#111' : '#aaa'; ctx.font = '600 13px system-ui';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(b.l + 1, b.X, b.Y + 0.5);
+      }
+    }
+
+    function tapAt(x, y) {
+      const b = badges.find(b => Math.hypot(x - b.X, y - b.Y) <= BADGE + 6);
+      if (b) { activeLayer = b.l; pending = -1; render(); return; }
+      // Nearest centre wins: cubes overlap on screen, but centres within one layer stay apart.
+      const hit = hits.map(t => ({ ...t, d: Math.hypot(x - t.X, y - t.Y) })).filter(t => t.d <= t.r).sort((a, b) => a.d - b.d)[0];
+      if (hit && hit.i === pending) play(hit.i);
+      else { pending = hit ? hit.i : -1; render(); }
+    }
+
+    let drag = null;
+    cv.addEventListener('pointerdown', e => {
+      drag = { x: e.clientX, y: e.clientY, moved: 0 }; cv.setPointerCapture(e.pointerId);
+    });
+    cv.addEventListener('pointermove', e => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      drag.moved += Math.abs(dx) + Math.abs(dy);
+      if (drag.moved < 8) return;
+      cv.style.cursor = 'grabbing';
+      st.yaw += dx * 0.01;
+      st.pitch = Math.max(-1.3, Math.min(1.3, st.pitch + dy * 0.01));
+      drag.x = e.clientX; drag.y = e.clientY; draw();
+    });
+    cv.addEventListener('pointerup', e => {
+      if (drag && drag.moved < 8) { const r = cv.getBoundingClientRect(); tapAt(e.clientX - r.left, e.clientY - r.top); }
+      drag = null; cv.style.cursor = 'grab';
+    });
+    cv.addEventListener('pointercancel', () => { drag = null; cv.style.cursor = 'grab'; });
+
+    p.appendChild(cv);
+    return { draw, tapAt, screenOf: i => proj(center(i)), badgeOf: l => badges[l] };
+  }
+
+  const view = cube(root.querySelector('.slot'), 316, 470);
+
+  function render() {
+    const msg = over ? (winLine ? turn + ' wins' : 'Draw')
+      : pending >= 0 ? turn + ': tap again to place' : turn + "'s turn · layer " + (activeLayer + 1);
+    root.querySelector('.st').textContent = msg;
+    view.draw();
+  }
+
+  root.addEventListener('click', e => {
+    const act = e.target.closest('[data-act]');
+    if (act) act.dataset.act === 'new' ? reset() : demo();
+  });
+
+  demo();
+})();
+</script>
