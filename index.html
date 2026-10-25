@@ -269,12 +269,273 @@
     return pickOne(bestByScore(board, emptyCells(board), me), rng);
   }
 
-  // Never mutates the caller's board (forkCells works on a copy).
+  // Hard: forced-chain search. A chain is a run of own moves that each make exactly one threat,
+  // each answered by the forced block, ending in a fork. The search keeps its own board and
+  // per-line piece counts in typed arrays, updating only the lines through a cell as it is set
+  // and unset. Sides are 1 (X) and 2 (O) inside the search.
+  const MAX_CHAIN = 8, NL = LINES.length, SIDE = { X: 1, O: 2 };
+  // Node budget per ms of the deadline: keeps play reproducible on fast machines, while the
+  // deadline still stops the search on slow ones.
+  const NODES_PER_MS = 1000;
+  const LINE_CELLS = Int8Array.from(LINES.flat());
+  const AT_START = new Int16Array(65), AT = new Int16Array(NL * 4);
+  for (let i = 0, k = 0; i < 64; i++) { AT_START[i] = k; for (const n of LINES_AT[i]) AT[k++] = n; AT_START[i + 1] = k; }
+  // Zobrist keys: halves 1 and 2 at (side * 64 + cell) and ((side + 3) * 64 + cell); the unused
+  // slots ZOB[side] and ZOB[192 + side] mark whose chain a remembered result is for.
+  const ZOB = (() => { const r = makeRng(0x51ab1c); return Int32Array.from({ length: 6 * 64 }, () => Math.floor(r() * 4294967296)); })();
+  const TT_SIZE = 1 << 16;
+
+  // Search state over a copy of board. Each search call takes a limit { time, nodes }.
+  function chainSearch(board, now) {
+    const cell = new Int8Array(64), cnt = [null, new Uint8Array(NL), new Uint8Array(NL)];
+    const mark = new Int32Array(64), weight = new Int32Array(64);
+    const cand = Array.from({ length: MAX_CHAIN }, () => new Int8Array(64));
+    const blocks = Array.from({ length: MAX_CHAIN }, () => new Int8Array(64));
+    // Remembered results by position: depth searched without a chain, or depth * 64 + first move of one.
+    const tk1 = new Int32Array(TT_SIZE), tk2 = new Int32Array(TT_SIZE);
+    const tFail = new Int8Array(TT_SIZE), tWin = new Int16Array(TT_SIZE);
+    const killer = new Int8Array(MAX_CHAIN).fill(-1); // last winning move per ply
+    let h1 = 0, h2 = 0, stamp = 0, nodes = 0, stopTime = 0, stopNodes = 0, out = false, cut = false;
+
+    function begin(limit) { stopTime = limit.time; stopNodes = limit.nodes; out = false; }
+    function set(i, p) {
+      cell[i] = p; h1 ^= ZOB[p * 64 + i]; h2 ^= ZOB[(p + 3) * 64 + i];
+      const c = cnt[p];
+      for (let k = AT_START[i], e = AT_START[i + 1]; k < e; k++) c[AT[k]]++;
+    }
+    function unset(i, p) {
+      cell[i] = 0; h1 ^= ZOB[p * 64 + i]; h2 ^= ZOB[(p + 3) * 64 + i];
+      const c = cnt[p];
+      for (let k = AT_START[i], e = AT_START[i + 1]; k < e; k++) c[AT[k]]--;
+    }
+    for (let i = 0; i < 64; i++) if (board[i]) set(i, SIDE[board[i]]);
+
+    function emptyOf(n) {
+      for (let k = n * 4; k < n * 4 + 4; k++) if (!cell[LINE_CELLS[k]]) return LINE_CELLS[k];
+      return -1;
+    }
+    // p's completing cells on lines through i: -1 none, the cell if exactly one, -2 if two or more.
+    function threatAt(i, p, q) {
+      const cp = cnt[p], cq = cnt[q];
+      let a = -1;
+      for (let k = AT_START[i], e = AT_START[i + 1]; k < e; k++) {
+        const n = AT[k];
+        if (cp[n] !== 3 || cq[n]) continue;
+        const j = emptyOf(n);
+        if (a < 0) a = j; else if (j !== a) return -2;
+      }
+      return a;
+    }
+    // Same over the whole board.
+    function allThreats(p, q) {
+      const cp = cnt[p], cq = cnt[q];
+      let a = -1;
+      for (let n = 0; n < NL; n++) {
+        if (cp[n] !== 3 || cq[n]) continue;
+        const j = emptyOf(n);
+        if (a < 0) a = j; else if (j !== a) return -2;
+      }
+      return a;
+    }
+    // Empty cells where p would make a threat, written to buf, cells on more open twos first.
+    // Returns how many.
+    function threatMoves(p, q, buf) {
+      const cp = cnt[p], cq = cnt[q];
+      let m = 0;
+      stamp++;
+      for (let n = 0; n < NL; n++) {
+        if (cp[n] !== 2 || cq[n]) continue;
+        for (let k = n * 4; k < n * 4 + 4; k++) {
+          const j = LINE_CELLS[k];
+          if (cell[j]) continue;
+          if (mark[j] !== stamp) { mark[j] = stamp; weight[j] = 0; buf[m++] = j; }
+          weight[j]++;
+        }
+      }
+      for (let a = 1; a < m; a++) { // insertion sort, heaviest first
+        const j = buf[a];
+        let b = a - 1;
+        while (b >= 0 && weight[buf[b]] < weight[j]) { buf[b + 1] = buf[b]; b--; }
+        buf[b + 1] = j;
+      }
+      return m;
+    }
+
+    // Can p (to move, no threat of its own) force a fork within depth own moves? q has no threat
+    // except `forced`, a cell p must take (-1 if none). On success the chain is pushed to path in
+    // reverse, cut short where a remembered chain is reused. Sets out when the limit is reached.
+    function attack(p, q, forced, depth, path, ply) {
+      if ((++nodes & 63) === 0 && (nodes >= stopNodes || now() >= stopTime)) out = true;
+      if (out) return false;
+      const k1 = h1 ^ ZOB[p], k2 = h2 ^ ZOB[192 + p], e = (k1 ^ (k2 >>> 15)) & (TT_SIZE - 1);
+      const known = tk1[e] === k1 && tk2[e] === k2;
+      if (known && tWin[e] && (tWin[e] >> 6) <= depth) { path.push(tWin[e] & 63); return true; }
+      const cs = cand[ply], ts = blocks[ply];
+      let m;
+      if (forced >= 0) { cs[0] = forced; m = 1; } else m = threatMoves(p, q, cs);
+      let singles = 0; // moves making exactly one threat, compacted to the front of cs (block in ts)
+      for (let a = 0; a < m; a++) {
+        const c = cs[a];
+        set(c, p);
+        const t = threatAt(c, p, q);
+        unset(c, p);
+        if (t === -2) { path.push(c); return true; }
+        if (t < 0) continue;
+        if (c === killer[ply] && singles) { cs[singles] = cs[0]; ts[singles] = ts[0]; cs[0] = c; ts[0] = t; }
+        else { cs[singles] = c; ts[singles] = t; }
+        singles++;
+      }
+      if (!singles) return false;
+      if (depth <= 1 || (known && tFail[e] >= depth)) { cut = true; return false; }
+      for (let a = 0; a < singles; a++) {
+        const c = cs[a], t = ts[a];
+        set(c, p); set(t, q);
+        const f = threatAt(t, q, p); // the block may threaten in turn
+        const ok = f !== -2 && attack(p, q, f, depth - 1, path, ply + 1);
+        unset(t, q); unset(c, p);
+        if (ok) {
+          path.push(t, c); killer[ply] = c;
+          if (!known) { tk1[e] = k1; tk2[e] = k2; tFail[e] = 0; }
+          tWin[e] = depth * 64 + c;
+          return true;
+        }
+        if (out) return false;
+      }
+      if (!known) { tk1[e] = k1; tk2[e] = k2; tWin[e] = 0; }
+      tFail[e] = depth;
+      return false;
+    }
+
+    // side's forced chain from the current position, as if side were to move: the cells in play
+    // order (from the first move), null if there is none within MAX_CHAIN, undefined if the limit
+    // was reached first.
+    function findChain(side, limit) {
+      const p = SIDE[side], q = 3 - p;
+      begin(limit);
+      const win = allThreats(p, q);
+      if (win !== -1) return win >= 0 ? [win] : [];
+      const forced = allThreats(q, p);
+      if (forced === -2) return null;
+      for (let d = 1; d <= MAX_CHAIN; d++) { // iterative deepening finds the shortest chain
+        const path = [];
+        cut = false;
+        if (attack(p, q, forced, d, path, 0)) return path.reverse();
+        if (out) return undefined;
+        if (!cut) return null; // nothing was cut off by depth, so deeper search finds nothing new
+      }
+      return null;
+    }
+
+    // With p (me) just set on a quiet c: would me, moving again, have a chain? Undefined at the limit.
+    function setsUp(c, me, limit) {
+      if (threatAt(c, SIDE[me], 3 - SIDE[me]) !== -1) return false;
+      const chain = findChain(me, limit);
+      return chain === undefined ? undefined : !!(chain && chain.length);
+    }
+
+    // With p just set on c, making a single threat blocked at f: does q still have a chain
+    // within depth? A block that threatens in turn continues q's chain; a quiet block counts as
+    // q's free move, so p's threat must not be spent on a defence that leaves q a chain anyway.
+    function threatLoses(f, p, q, depth) {
+      set(f, q);
+      const g = threatAt(f, q, p);
+      let lost;
+      if (g === -1) lost = attack(q, p, -1, depth, [], 0);
+      else { unset(f, q); return g === -2 || attack(q, p, f, depth, [], 0); }
+      unset(f, q);
+      return lost;
+    }
+
+    // A cell for me after which opp has no chain, deepening over candidates in the given order and
+    // stopping early at a safe cell that also sets up a chain of my own. If every cell loses, the
+    // first one that held out longest, provided opp then needs at least minDepth own moves;
+    // otherwise -1. At the limit, the first safe cell, else the longest holder found so far.
+    function defend(me, candidates, minDepth, limit) {
+      const p = SIDE[me], q = 3 - p;
+      let survivors = candidates, best = -1, bestDepth = 0, safe = -1;
+      const fallback = () => (safe >= 0 ? safe : bestDepth >= minDepth ? best : -1);
+      for (let d = 1; d <= MAX_CHAIN && survivors.length; d++) {
+        const next = [];
+        for (const c of survivors) {
+          begin(limit);
+          cut = false;
+          set(c, p);
+          const f = threatAt(c, p, q);
+          const lost = f >= 0 ? threatLoses(f, p, q, d) : f === -1 && attack(q, p, -1, d, [], 0);
+          const proven = !out && !lost && (!cut || d === MAX_CHAIN);
+          const bonus = proven && setsUp(c, me, limit);
+          unset(c, p);
+          if (bonus) return c;
+          if (out || bonus === undefined) return fallback();
+          if (proven) { if (safe < 0) safe = c; } else if (!lost) next.push(c);
+        }
+        survivors = next;
+        if (next.length) { best = next[0]; bestDepth = d; }
+      }
+      return fallback();
+    }
+
+    // The first quiet cell in candidates after which me, moving again, would have a chain; -1 if
+    // none (or the limit was reached).
+    function setUp(me, candidates, limit) {
+      const p = SIDE[me];
+      for (const c of candidates) {
+        set(c, p);
+        const r = setsUp(c, me, limit);
+        unset(c, p);
+        if (r === undefined) return -1;
+        if (r) return c;
+      }
+      return -1;
+    }
+
+    // Cells where me would make a threat, as a plain array.
+    function threatCellsOf(me) {
+      const buf = new Int8Array(64), m = threatMoves(SIDE[me], 3 - SIDE[me], buf);
+      return Array.from(buf.subarray(0, m));
+    }
+
+    return { findChain, defend, setUp, threatCellsOf };
+  }
+
+  function hardMove(board, me, rng, now, deadline) {
+    // 1-2. Win, block, own fork (as medium).
+    let m = winOrBlock(board, me);
+    if (m >= 0) return m;
+    const forks = forkCells(board, me);
+    if (forks.length) return pickOne(bestByScore(board, forks, me), rng);
+    // The searches share the time to the deadline (and the node budget): 35% for my chain, up to
+    // 60% for spotting the opponent's, the rest for defence.
+    const opp = other(me), t0 = now(), budget = deadline - t0, nodeBudget = Math.round(budget) * NODES_PER_MS;
+    const limit = f => ({ time: t0 + budget * f, nodes: nodeBudget * f });
+    const S = chainSearch(board, now);
+    // 3. Own forced chain.
+    const mine = S.findChain(me, limit(0.35));
+    if (mine && mine.length) return mine[0];
+    // 4. Defence: a cell after which the opponent has no chain.
+    const theirs = S.findChain(opp, limit(0.6));
+    const score = board.map((v, i) => (v ? -1 : cellScore(board, i, me)));
+    const byScore = cells => cells.filter(i => !board[i]).sort((a, b) => score[b] - score[a] || a - b);
+    if (theirs && theirs.length) {
+      const order = [...new Set([...byScore(theirs), ...byScore(S.threatCellsOf(me)), ...byScore(emptyCells(board))])];
+      m = S.defend(me, order, Math.ceil(theirs.length / 2), limit(1));
+      if (m >= 0) return m;
+    }
+    // Extra step (wins far more often): a quiet cell after which I would have a chain.
+    if (theirs !== undefined) {
+      m = S.setUp(me, byScore(emptyCells(board)), limit(1));
+      if (m >= 0) return m;
+    }
+    // 5. Medium's fork-block and best-score rules (also the answer when time runs out).
+    return mediumMove(board, me, rng);
+  }
+
+  // Never mutates the caller's board (all levels work on a copy).
   function chooseMove(board, me, level, opts = {}) {
     const { rng = Math.random, now = () => performance.now(), deadline = now() + 150 } = opts;
     const work = board.slice();
     if (level === 'easy') return easyMove(work, me, rng);
-    // 'hard' behaves like medium until Task 6 adds search (it will use now and deadline).
+    if (level === 'hard') return hardMove(work, me, rng, now, deadline);
     return mediumMove(work, me, rng);
   }
 

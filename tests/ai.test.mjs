@@ -28,3 +28,83 @@ test('easy varies its opening across seeds', () => {
 
 test('medium makes a fork', () => assert.equal(pick(boardOf([0, 1, 6, 10], [48, 51, 60, 63]), 'X', 'medium'), 2));
 test('medium blocks a fork', () => assert.equal(pick(boardOf([0, 1, 6, 10], [51, 60, 63]), 'O', 'medium'), 2));
+
+test('hard takes wins and blocks', () => {
+  assert.equal(pick(boardOf([0, 1, 2], [16, 17, 32]), 'X', 'hard'), 3);
+  assert.equal(pick(boardOf([0, 1, 2], [16, 17]), 'O', 'hard'), 3);
+  assert.equal(pick(boardOf([0, 1, 2], [16, 17, 18]), 'O', 'hard'), 19);
+});
+
+test('hard finds a forced chain and wins against forced blocks', () => {
+  const b = boardOf([25, 36, 44, 48, 49], [0, 14, 18, 57, 58]);
+  const first = pick(b, 'X', 'hard');
+  assert.ok([12, 51].includes(first));
+  let won = false;
+  for (let move = 0; move < 4 && !won; move++) {
+    const x = move === 0 ? first : pick(b, 'X', 'hard');
+    b[x] = 'X';
+    if (Q.winningLine(b, x)) { won = true; break; }
+    const t = Q.threatCells(b, 'X');
+    assert.ok(t.length >= 1, 'every chain move must threaten');
+    b[t[0]] = 'O';
+  }
+  assert.ok(won);
+});
+
+test('hard defends against a forced chain', () => {
+  assert.equal(pick(boardOf([25, 36, 44, 48, 49], [0, 14, 18, 57]), 'O', 'hard'), 12);
+});
+
+// Medium happens to play 12 in P3 and P4 (its best-scoring cell), so these two pin the search.
+test('hard finds a chain that medium misses', () => {
+  const b = boardOf([3, 12, 15, 36, 37, 44, 48, 51, 54, 60], [0, 6, 22, 24, 26, 28, 33, 35, 38, 57]);
+  let won = false;
+  for (let move = 0; move < 4 && !won; move++) {
+    const x = pick(b, 'X', 'hard');
+    b[x] = 'X';
+    if (Q.winningLine(b, x)) { won = true; break; }
+    const t = Q.threatCells(b, 'X');
+    assert.ok(t.length >= 1, 'every chain move must threaten');
+    b[t[0]] = 'O';
+  }
+  assert.ok(won);
+});
+
+test('hard finds the only defence when it is not the best-scoring cell', () => {
+  assert.equal(pick(boardOf([3, 4, 10, 12, 15, 48], [5, 6, 8, 14, 63]), 'O', 'hard'), 37);
+});
+
+test('hard respects the deadline', () => {
+  const b = boardOf([0, 5, 21, 42, 27, 33], [63, 60, 12, 48, 30]);
+  const t0 = performance.now();
+  Q.chooseMove(b, 'O', 'hard', { rng: Q.makeRng(3), deadline: performance.now() + 100 });
+  assert.ok(performance.now() - t0 < 200);
+});
+
+const playGame = (levelX, levelO, seed) => {
+  const b = Array(64).fill(''), rng = Q.makeRng(seed);
+  let worst = 0;
+  for (let n = 0, p = 'X'; n < 64; n++, p = Q.other(p)) {
+    const t0 = performance.now();
+    const i = Q.chooseMove(b, p, p === 'X' ? levelX : levelO, { rng });
+    worst = Math.max(worst, performance.now() - t0);
+    assert.equal(b[i], '');
+    b[i] = p;
+    if (Q.winningLine(b, i)) return { winner: p, worst };
+  }
+  return { winner: null, worst };
+};
+
+test('hard as O does not lose to easy, and every move is quick', () => {
+  let losses = 0;
+  for (let seed = 1; seed <= 10; seed++) {
+    const r = playGame('easy', 'hard', seed);
+    if (r.winner === 'X') losses++;
+    assert.ok(r.worst < 250, `move took ${r.worst} ms`);
+  }
+  assert.ok(losses <= 1, `hard lost ${losses} of 10`);
+});
+
+test('every level finishes a self-play game with legal moves', () => {
+  for (const level of LEVELS) playGame(level, level, 7);
+});
