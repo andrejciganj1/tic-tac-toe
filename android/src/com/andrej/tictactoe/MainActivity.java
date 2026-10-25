@@ -13,6 +13,7 @@ public class MainActivity extends Activity {
     WebView w = new WebView(this);
     w.setBackgroundColor(Color.parseColor("#111111"));
     w.getSettings().setJavaScriptEnabled(true);
+    w.getSettings().setDomStorageEnabled(true);
     w.loadUrl("file:///android_asset/index.html");
     setContentView(w);
   }
