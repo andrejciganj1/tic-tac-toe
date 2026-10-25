@@ -732,20 +732,23 @@
   }
 
   function tapAt(x, y) {
+    let placed = false;
     const b = badges.find(b => Math.hypot(x - b.X, y - b.Y) <= BADGE_R + 6);
     if (b) Q.selectLayer(s, b.l);
     else {
       const i = pickCell(hits, x, y);
-      if (i < 0) Q.clearSelection(s); else Q.tapCell(s, i);
+      if (i < 0) Q.clearSelection(s); else placed = Q.tapCell(s, i) === 'placed';
     }
     render();
-    if (s.thinking) scheduleComputer();
+    if (placed && s.thinking) scheduleComputer();
   }
 
   // The computer answers after a short pause; applyComputerMove drops the move if the game was restarted meanwhile.
+  let computerTimer = 0;
   function scheduleComputer() {
     const gen = s.gen;
-    setTimeout(() => {
+    clearTimeout(computerTimer);
+    computerTimer = setTimeout(() => {
       const i = Q.chooseMove(s.board, 'O', s.mode, { deadline: performance.now() + 150 });
       Q.applyComputerMove(s, i, gen);
       render();
@@ -766,6 +769,7 @@
   function closeSheet() { sheet.hidden = true; }
   function pickMode(mode) {
     lastMode = mode;
+    clearTimeout(computerTimer);
     try { localStorage.setItem(STORE_KEY, mode); } catch (_) {}
     Q.restart(s, mode);
     closeSheet();

@@ -89,3 +89,26 @@ test('modes, computer turn and stale move', { skip: !chromeAvailable() && 'Chrom
   assert.equal(out.piecesAfterStaleRestart, 0);
   assert.equal(out.modeAfterRestart, 'vs Computer · Easy');
 });
+
+test('taps during the computer wait do not add or hasten computer moves', { skip: !chromeAvailable() && 'Chrome not found' }, async () => {
+  const out = await runScenario(`
+    const t = window.qubicTest, tap = p => t.tapAt(p.X, p.Y), wait = ms => new Promise(r => setTimeout(r, ms));
+    const os = () => t.state.board.filter(v => v === 'O').length;
+    document.querySelector('[data-mode="hard"]').click();
+    tap(t.screenOf(0)); tap(t.screenOf(0));
+    await wait(100);
+    tap(t.badgeOf(0)); tap({ X: 2, Y: 2 });
+    await wait(1500);
+    out.oneO = os();
+    const e = t.state.board.findIndex((v, i) => !v && i < 16);
+    tap(t.screenOf(e)); tap(t.screenOf(e));
+    await wait(200);
+    out.after200 = os();
+    await wait(1000);
+    out.after1200 = os();
+  `);
+  assert.deepEqual(out.errors, []);
+  assert.equal(out.oneO, 1);
+  assert.equal(out.after200, 1);
+  assert.equal(out.after1200, 2);
+});
