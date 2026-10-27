@@ -11,7 +11,9 @@ Four in a row on a 4×4×4 cube: along any straight line of 4 cells (rows, colum
 
 ## Play in the browser
 
-Open `index.html`, or from this folder:
+Play online at https://andrejciganj1.github.io/tic-tac-toe/. On a phone, use "Add to Home screen" (Android Chrome) or Share > "Add to Home Screen" (iPhone Safari) to install it; it then works offline.
+
+To run it locally, open `index.html`, or from this folder:
 
 ```sh
 python3 -m http.server 8000

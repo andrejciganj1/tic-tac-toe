@@ -10,6 +10,10 @@
 - `android/`: the WebView shell (`AndroidManifest.xml`, `src/.../MainActivity.java`, `build.sh`).
 - `tic-tac-toe.apk`: committed build output, the file that gets copied to the phone.
 
+## Hosting
+
+The web version is on GitHub Pages at https://andrejciganj1.github.io/tic-tac-toe/, served from `main` at the repo root (public repo `andrejciganj1/tic-tac-toe`). Every push to `main` redeploys it within a minute or two, so a push is a release: run the tests and bump `CACHE` in `sw.js` first when a cached file changed.
+
 ## Conventions
 
 - Plain HTML/CSS/JS, no frameworks, no bundler, no dependencies. Keep it that way unless asked.
