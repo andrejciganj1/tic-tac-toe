@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$ROOT/.." && pwd)"
 SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 if [[ -z "$SDK" ]]; then
-  for c in "$HOME/Library/Android/sdk" /workspace/android-sdk "$HOME/Android/Sdk"; do
+  for c in "$HOME/Library/Android/sdk" /opt/homebrew/share/android-commandlinetools /workspace/android-sdk "$HOME/Android/Sdk"; do
     [[ -d "$c" ]] && SDK="$c" && break
   done
 fi
@@ -32,7 +32,7 @@ cp "$REPO/icon.png" "$RES/mipmap/ic_launcher.png"
 javac --release 11 -cp "$ANDROID_JAR" -d "$CLS" \
   "$ROOT/src/com/andrej/tictactoe/MainActivity.java" \
   "$GEN"/com/andrej/tictactoe/R.java
-"$BT/d8" --min-api 21 --output "$OBJ" $(find "$CLS" -name '*.class')
+"$BT/d8" --min-api 21 --lib "$ANDROID_JAR" --output "$OBJ" $(find "$CLS" -name '*.class')
 "$BT/aapt" package -f -M "$ROOT/AndroidManifest.xml" -S "$RES" -A "$ASSETS" \
   -I "$ANDROID_JAR" -F "$OUT/base.apk"
 ( cd "$OBJ" && zip -u "$OUT/base.apk" classes.dex )

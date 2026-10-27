@@ -21,7 +21,7 @@
 
 - Changed any cached file (every shipped change to `index.html`, `manifest.json` or `icon.png`)? Bump `CACHE` in `sw.js` (currently `ttt-v2`, next `ttt-v3`), or installed PWAs keep serving the old version.
 - Added a file the page needs? Add it to `ASSETS` in `sw.js`, and to `android/build.sh` staging if the APK needs it too.
-- Rebuild the APK with `./android/build.sh` (needs `ANDROID_SDK_ROOT` with build-tools + a platform, and a JDK). The Android SDK is not installed on the main dev Mac as of 2026-10-25, so `tic-tac-toe.apk` has not been rebuilt for 4×4×4 yet (it is still the 3×3 build).
+- Rebuild the APK with `./android/build.sh` (needs `ANDROID_SDK_ROOT` with build-tools + a platform, and a JDK). On the main dev Mac the SDK is the Homebrew one at `/opt/homebrew/share/android-commandlinetools` (build-tools 34.0.0, android-34), and the build was run with Java 17 (`JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home`). `tic-tac-toe.apk` is the 4×4×4 build as of 2026-10-25.
 - `build.sh` signs with `android/debug.keystore` and creates one if missing (gitignored). A new keystore means a new signature, so the phone must uninstall the old app before installing.
 
 ## Testing

@@ -21,12 +21,14 @@ Then open http://localhost:8000.
 
 ## Android
 
-`tic-tac-toe.apk` is a signed debug build (`com.andrej.tictactoe`). The APK is still the 3×3 build until it is rebuilt with `android/build.sh` (see below). Copy it to your phone and install it (allow install from that source if HyperOS asks). It runs fully offline.
+`tic-tac-toe.apk` is a signed debug build (`com.andrej.tictactoe`). Copy it to your phone and install it (allow install from that source if HyperOS asks). It runs fully offline.
 
 The APK is a WebView shell (`android/`) around the same `index.html` and `icon.png` as the browser version. `android/build.sh` copies them in at build time, so there is only one copy of the game. It needs the Android SDK build-tools and a JDK (no Gradle):
 
 ```sh
-export ANDROID_SDK_ROOT="$HOME/Library/Android/sdk"   # or your SDK path
+# SDK via Homebrew: brew install --cask android-commandlinetools, then
+# sdkmanager "build-tools;34.0.0" "platforms;android-34" (sdkmanager needs Java 17+)
+export ANDROID_SDK_ROOT="/opt/homebrew/share/android-commandlinetools"   # or your SDK path
 ./android/build.sh
 ```
 
