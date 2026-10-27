@@ -138,3 +138,16 @@ test('taps during the computer wait do not add or hasten computer moves', { skip
   assert.equal(out.after200, 1);
   assert.equal(out.after1200, 2);
 });
+
+// Miter joins put spikes past the corners of faces seen nearly edge-on; resizing the canvas resets the context.
+test('cube edges use round joins, also after a resize', { skip: !chromeAvailable() && 'Chrome not found' }, async () => {
+  const out = await runScenario(`
+    const ctx = document.getElementById('cube').getContext('2d');
+    out.before = ctx.lineJoin;
+    window.dispatchEvent(new Event('resize'));
+    await new Promise(r => setTimeout(r, 200));
+    out.after = ctx.lineJoin;
+  `);
+  assert.deepEqual(out.errors, []);
+  assert.deepEqual([out.before, out.after], ['round', 'round']);
+});

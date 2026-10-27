@@ -697,6 +697,7 @@
     if (!w) return;
     cam = makeCamera({ w, h, yaw: view.yaw, pitch: view.pitch });
     ctx.clearRect(0, 0, w, h);
+    ctx.lineJoin = 'round'; // miter joins spike past sharp corners of faces seen edge-on
     hits = [];
     const order = s.board.map((_, i) => ({ i, z: rotate(cam, cellCenter(i))[2] })).sort((a, b) => b.z - a.z);
     for (const { i } of order) voxel(i);
